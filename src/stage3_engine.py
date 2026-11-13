@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
 
+from src.taxonomy_helper import enrich_stage3_pools, resolve_crop_family
 from src.router import SpatialRouter, RouteDecision
 from src.stage3_barc_selector import BARCCandidateSelector
 from src.global_env_fetcher import GlobalEnvFetcher, EnvironmentalProfile
@@ -75,6 +76,10 @@ class Stage3Engine:
                 upazila_code=route.upazila_code,
                 land_type=land_type
             )
+            
+            # 👇 Unknown ফ্যামিলি ফিক্স করার জন্য এনরিচমেন্ট কল
+            enriched_seasons = enrich_stage3_pools(barc_res["seasons"])
+            
             total_time = (time.perf_counter() - t0) * 1000.0
 
             return Stage3Result(
@@ -84,7 +89,7 @@ class Stage3Engine:
                 pipeline="BANGLADESH_BARC",
                 route_details=route.to_dict(),
                 cropping_intensity_k=barc_res["cropping_intensity_k"],
-                seasons=barc_res["seasons"],
+                seasons=enriched_seasons,
                 candidate_counts=barc_res["candidate_counts"],
                 environmental_metadata={
                     "is_haor_wetland": barc_res["is_haor_wetland"],
@@ -97,6 +102,10 @@ class Stage3Engine:
             # Global FAO EcoCrop Pipeline
             profile: EnvironmentalProfile = self.env_fetcher.get_profile(latitude, longitude)
             fao_res = self.fao_selector.select_candidate_pools(profile)
+            
+            # 👇 Global পাইপলাইনের জন্য এনরিচমেন্ট কল
+            enriched_seasons = enrich_stage3_pools(fao_res["seasons"])
+            
             total_time = (time.perf_counter() - t0) * 1000.0
 
             return Stage3Result(
@@ -106,7 +115,7 @@ class Stage3Engine:
                 pipeline="GLOBAL_FAO_ECOCROP",
                 route_details=route.to_dict(),
                 cropping_intensity_k=fao_res["cropping_intensity_k"],
-                seasons=fao_res["seasons"],
+                seasons=enriched_seasons,
                 candidate_counts=fao_res["candidate_counts"],
                 environmental_metadata={
                     "annual_rainfall_mm": profile.annual_rainfall_mm,
@@ -149,8 +158,9 @@ def format_result_cli(res: Stage3Result) -> str:
     for s_name, pool in res.seasons.items():
         lines.append(f"  ▶ {s_name.upper()} ({len(pool)} crops):")
         for i, c in enumerate(pool, 1):
+            fam = resolve_crop_family(c.get('crop_name', ''), c.get('botanical_family', 'Unknown'))
             score_str = f"Score: {c.get('suitability_score'):.2f} [{c.get('suitability_tier')}]"
-            details = f"Family: {c.get('botanical_family'):14} | Duration: {c.get('duration_days', 0):3d}d | Yield: {c.get('yield_ton_ha', 0):4.1f} t/ha"
+            details = f"Family: {fam:14} | Duration: {c.get('duration_days', 0):3d}d | Yield: {c.get('yield_ton_ha', 0):4.1f} t/ha"
             lines.append(f"    {i}. {c.get('crop_name'):22} | {score_str:24} | {details}")
 
     lines.append("=" * 75)
